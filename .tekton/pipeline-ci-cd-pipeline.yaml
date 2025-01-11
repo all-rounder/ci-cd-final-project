@@ -1,0 +1,170 @@
+﻿apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  creationTimestamp: '2025-01-11T01:29:16Z'
+  generation: 4
+  managedFields:
+    - apiVersion: tekton.dev/v1beta1
+      fieldsType: FieldsV1
+      fieldsV1:
+        'f:spec':
+          .: {}
+          'f:finally': {}
+          'f:params': {}
+          'f:resources': {}
+          'f:tasks': {}
+          'f:workspaces': {}
+      manager: Mozilla
+      operation: Update
+      time: '2025-01-11T02:56:58Z'
+  name: ci-cd-pipeline
+  namespace: sn-labs-xiaoyao160
+  resourceVersion: '1936307969'
+  uid: 5af4d786-9365-4cf5-bd98-6e85c782ffbf
+spec:
+  params:
+    - default: 'https://github.com/all-rounder/ci-cd-final-project'
+      name: repo-url
+      type: string
+    - default: main
+      name: branch
+      type: string
+    - default: >-
+        image-registry.openshift-image-registry.svc:5000/sn-labs-xiaoyao160/cicdproject:latest
+      name: build-image
+      type: string
+    - default: cicd-fin-proj
+      name: app-name
+      type: string
+  tasks:
+    - name: cleanup
+      taskRef:
+        kind: Task
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: output
+    - name: git-clone
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: ''
+        - name: refspec
+          value: ''
+        - name: submodules
+          value: 'true'
+        - name: depth
+          value: '1'
+        - name: sslVerify
+          value: 'true'
+        - name: crtFileName
+          value: ca-bundle.crt
+        - name: subdirectory
+          value: ''
+        - name: sparseCheckoutDirectories
+          value: ''
+        - name: deleteExisting
+          value: 'true'
+        - name: httpProxy
+          value: ''
+        - name: httpsProxy
+          value: ''
+        - name: noProxy
+          value: ''
+        - name: verbose
+          value: 'true'
+        - name: gitInitImage
+          value: >-
+            gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:v0.40.2
+        - name: userHome
+          value: /home/git
+      runAfter:
+        - cleanup
+      taskRef:
+        kind: Task
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: output
+    - name: flake8
+      params:
+        - name: image
+          value: >-
+            docker.io/alpine/flake8@sha256:bb280bf2af4a434be912f25bbcb6c79ea4d735ed3c8e259f96c405998920871f
+        - name: path
+          value: .
+        - name: requirements_file
+          value: requirements.txt
+        - name: args
+          value:
+            - '--select=E9,F63,F7,F82'
+            - '--max-line-length=127'
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: Task
+        name: flake8
+      workspaces:
+        - name: source
+          workspace: output
+    - name: nose
+      params:
+        - name: args
+          value: '-v'
+      runAfter:
+        - flake8
+      taskRef:
+        kind: Task
+        name: nose
+      workspaces:
+        - name: source
+          workspace: output
+    - name: buildah
+      params:
+        - name: IMAGE
+          value: $(params.build-image)
+        - name: BUILDER_IMAGE
+          value: >-
+            registry.redhat.io/rhel8/buildah@sha256:ac0b8714cc260c94435cab46fe41b3de0ccbc3d93e38c395fa9d52ac49e521fe
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: DOCKERFILE
+          value: ./Dockerfile
+        - name: CONTEXT
+          value: .
+        - name: TLSVERIFY
+          value: 'true'
+        - name: FORMAT
+          value: oci
+        - name: BUILD_EXTRA_ARGS
+          value: ''
+        - name: PUSH_EXTRA_ARGS
+          value: ''
+        - name: SKIP_PUSH
+          value: 'false'
+      runAfter:
+        - nose
+      taskRef:
+        kind: ClusterTask
+        name: buildah
+      workspaces:
+        - name: source
+          workspace: output
+    - name: deploy
+      params:
+        - name: SCRIPT
+          value: >-
+            oc create deployment $(params.app-name)
+            --image=$(params.build-image) --dry-run=client -o yaml | oc apply -f
+            -
+      runAfter:
+        - buildah
+      taskRef:
+        kind: ClusterTask
+        name: openshift-client
+      workspaces:
+        - name: manifest-dir
+          workspace: output
+  workspaces:
+    - name: output
